@@ -13,7 +13,7 @@ Open Claude Code in your project and paste:
 ```text
 Install this software factory in this project from the reference repository:
 
-https://github.com/Isaccseven/zazencodes-season-3/tree/self-hosted-factory/src/software-factory-claude-code-v2
+https://github.com/Isaccseven/zazencodes-season-3/tree/main/src/software-factory-claude-code-v2
 ```
 
 Your agent reads [`INSTALL.md`](INSTALL.md), copies the skill, agents, scripts
