@@ -51,6 +51,12 @@ One Claude Code session orchestrates every job, `concurrency` at a time
 (default 3). Each job gets its own git worktree and branch. All state lives in
 `factory/jobs/`, so if the session dies, `/factory run` picks every job back up.
 
+## Run it on a server
+
+This fork adds a webhook server, so the factory can run on a host of your own
+instead of your laptop: label an issue and a container runs
+`claude -p "/factory run"` for you. See [`server/README.md`](server/README.md).
+
 ## Commands
 
 ```
@@ -103,6 +109,7 @@ factory/
   bin/route                   risk + surfaces → the job's reviewers and models
   dashboard.html              the board
 examples/jobs/                finished jobs from a real run
+server/                       this fork: webhook server, Dockerfile and compose file to self-host it
 INSTALL.md                    instructions for the installing agent
 DESIGN.md                     how it works and why
 ```
@@ -166,6 +173,15 @@ They come from a test run on a small private calculator repo, with
 distribute must also be released under GPLv3.
 
 Want to use this in closed-source or commercial software? Get in touch for a commercial license.
+
+### Changes in this fork
+
+Modified from the original by ZazenCodes, November 2026, under the same GPLv3:
+
+- Added `server/`: a webhook server that runs the factory headless, with a
+  Dockerfile, a compose file and tests.
+- `factory/bin/job` no longer exits when a transcript names a model that has no
+  price in `config.json`; it leaves those tokens out of the cost and warns.
 
 <p align="center">
   <a href="https://zazencodes.com/?utm_source=github&utm_medium=referral&utm_campaign=software-factory-claude-code-v2">
