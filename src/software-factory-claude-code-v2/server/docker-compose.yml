@@ -3,6 +3,7 @@
 services:
   factory:
     build: .
+    init: true            # reaps agent processes a stopped run leaves behind
     env_file: .env
     restart: unless-stopped
     volumes:

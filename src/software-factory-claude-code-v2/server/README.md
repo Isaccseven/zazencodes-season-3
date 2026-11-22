@@ -5,9 +5,10 @@ an issue gets the `factory` label; the server runs Claude Code headless against
 its own checkout of your repository and the job ends as a pull request, as it
 does locally. No terminal has to stay open.
 
-This folder is an addition to the upstream factory by ZazenCodes. The pipeline,
-agents and scripts are unchanged; the server only decides *when* to run
-`/factory run`.
+This folder is an addition to the upstream factory by ZazenCodes. The pipeline
+and agents are unchanged, and the server only decides *when* to run
+`/factory run`. One script differs: `factory/bin/job` no longer stops every job
+when Claude Code reports a model that has no price in `config.json`.
 
 ## How it works
 
@@ -27,7 +28,7 @@ GitHub webhook ──► POST /webhook ── signature check, answers 202 at on
 |---|---|
 | `issues` labeled `factory`, or a labeled issue reopened | starts a run |
 | `issue_comment` on an open labeled issue | starts a run: it may answer a `needs-info` question |
-| `issue_comment` `/factory run`, `/factory feedback <text>`, `/factory reject <reason>` | from people with write access only; works on the issue or its PR |
+| `issue_comment` `/factory run`, `/factory feedback <text>`, `/factory reject <reason>` | works on the issue or its PR; feedback and reject are applied only when GitHub reports write or admin permission for the commenter |
 | `pull_request` merged from a `factory/*` branch | starts a run: a slot is free |
 | anything else, another repository, the factory's own comments | ignored |
 
@@ -37,10 +38,9 @@ it runs the queue once, which resumes whatever a restart interrupted.
 
 ## Before you start
 
-1. Install the factory in your repository with [`INSTALL.md`](../INSTALL.md)
-   and push it to the default branch. Take `factory/bin/job` from this fork: it
-   no longer stops every job when Claude Code reports a model that has no price
-   in `config.json`.
+1. Install the factory in your repository with this fork's
+   [`INSTALL.md`](../INSTALL.md), which copies the fixed `factory/bin/job`, and
+   push it to the default branch.
 2. Make sure `factory/checks.sh` can run in the container. The image has Python
    3.13, git and `gh`. Add your toolchain to the [`Dockerfile`](Dockerfile)
    where it says so.
@@ -118,7 +118,8 @@ it.
   without asking. Nobody is there to approve a prompt, so anything outside that
   list is denied.
 - The trust boundary is unchanged: only people with triage or write access can
-  add the `factory` label, and commands need write access.
+  add the `factory` label. Feedback and reject need write permission, which the
+  server asks GitHub for per comment.
 - The approver can still merge with no human looking. Start with
   `concurrency: 1`, and protect the base branch if you want a required review.
 - One headless run is capped by `FACTORY_RUN_TIMEOUT`. After two runs in a row

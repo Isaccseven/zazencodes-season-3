@@ -85,7 +85,7 @@ def payload(**fields):
 
 
 def comment(body, assoc="OWNER"):
-    return {"body": body, "author_association": assoc}
+    return {"body": body, "author_association": assoc, "user": {"login": "octocat"}}
 
 
 class SignatureTest(unittest.TestCase):
@@ -138,7 +138,8 @@ class DecideTest(Case):
     def test_commands_need_write_access(self):
         body = "/factory feedback make it blue\nand round"
         kind, cmd = self.decide("issue_comment", action="created", issue=issue(7, pull_request={}), comment=comment(body))
-        self.assertEqual((kind, cmd), ("command", {"kind": "feedback", "number": 7, "text": "make it blue\nand round"}))
+        self.assertEqual((kind, cmd), ("command", {"kind": "feedback", "number": 7, "text": "make it blue\nand round",
+                                                   "login": "octocat"}))
         kind, cmd = self.decide("issue_comment", action="created", issue=issue(), comment=comment("/factory reject no"))
         self.assertEqual((kind, cmd["kind"], cmd["text"]), ("command", "reject", "no"))
         self.assertEqual(self.decide("issue_comment", action="created", issue=issue(), comment=comment("/factory run"))[0], "run")
@@ -188,9 +189,10 @@ class RunnerTest(Case):
         job.mkdir(parents=True)
         (job / "job.json").write_text(json.dumps({"id": "001-x", "issue": 1, "pr": 7, "stage": "needs-human", "round": 3}))
         runner = fs.Runner(self.cfg)
+        runner.can_write = lambda login: login == "octocat"
         text = "make it blue; $(rm -rf /) `id`"
-        runner.commands.put({"kind": "feedback", "number": 7, "text": text})  # by PR number
-        runner.commands.put({"kind": "reject", "number": 1, "text": "no"})    # by issue number
+        runner.commands.put({"kind": "feedback", "number": 7, "text": text, "login": "octocat"})  # by PR number
+        runner.commands.put({"kind": "reject", "number": 1, "text": "no", "login": "octocat"})    # by issue number
         runner.cycle()
         self.assertEqual((self.root / "feedback-001-x.txt").read_text(), text)
         self.assertEqual((self.root / "reject-001-x.txt").read_text(), "no")
@@ -199,16 +201,36 @@ class RunnerTest(Case):
         replies = []
         runner = fs.Runner(self.cfg)
         runner.reply = lambda number, body: replies.append((number, body))
-        runner.commands.put({"kind": "feedback", "number": 99, "text": "x"})
+        runner.can_write = lambda login: login == "octocat"
+        runner.commands.put({"kind": "feedback", "number": 99, "text": "x", "login": "octocat"})
         runner.cycle()
         job = self.root / "factory" / "jobs" / "001-x"
         job.mkdir(parents=True)
         (job / "job.json").write_text(json.dumps({"id": "001-x", "issue": 1, "pr": None, "stage": "build", "round": 1}))
         (self.root / "refuse.txt").write_text("")
-        runner.commands.put({"kind": "feedback", "number": 1, "text": "x"})
+        runner.commands.put({"kind": "feedback", "number": 1, "text": "x", "login": "octocat"})
         runner.cycle()
         self.assertEqual([n for n, _ in replies], [99, 1])
         self.assertIn("stub refuses", replies[1][1])
+
+    def test_a_command_from_someone_without_write_permission_is_not_applied(self):
+        job = self.root / "factory" / "jobs" / "001-x"
+        job.mkdir(parents=True)
+        (job / "job.json").write_text(json.dumps({"id": "001-x", "issue": 1, "pr": 7, "stage": "needs-human", "round": 3}))
+        replies = []
+        runner = fs.Runner(self.cfg)
+        runner.reply = lambda number, body: replies.append((number, body))
+        runner.can_write = lambda login: False
+        runner.commands.put({"kind": "feedback", "number": 1, "text": "ship it", "login": "reader"})
+        runner.cycle()
+        self.assertFalse((self.root / "feedback-001-x.txt").exists())
+        self.assertIn("write access", replies[0][1])
+
+    def test_can_write_refuses_odd_logins_without_asking_github(self):
+        runner = fs.Runner(self.cfg)
+        runner.sh = lambda *a, **k: self.fail("asked GitHub")
+        for login in ("", "a/b", "../x", "a b"):
+            self.assertFalse(runner.can_write(login))
 
     def test_events_during_a_run_coalesce_into_one_orchestrator(self):
         (self.root / "queue.txt").write_text("new\t1\t-\t-\tAdd x\n")
@@ -287,7 +309,7 @@ class HttpTest(Case):
     def test_a_command_is_queued_with_its_text(self):
         data = payload(action="created", issue=issue(7, pull_request={}), comment=comment("/factory feedback blue"))
         self.assertEqual(self.hook("issue_comment", data)[0], 202)
-        self.assertEqual(self.runner.commands, [{"kind": "feedback", "number": 7, "text": "blue"}])
+        self.assertEqual(self.runner.commands, [{"kind": "feedback", "number": 7, "text": "blue", "login": "octocat"}])
 
     def test_health_and_unknown_paths(self):
         code, body = self.request("/healthz")
@@ -295,6 +317,15 @@ class HttpTest(Case):
         self.assertEqual(self.request("/")[0], 404)
         self.assertEqual(self.request("/factory/config.json")[0], 404)
         self.assertEqual(self.request("/nope", b"{}")[0], 404)
+
+    def test_a_negative_length_is_rejected(self):
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=5)
+        conn.putrequest("POST", "/webhook")
+        conn.putheader("Content-Length", "-1")
+        conn.endheaders()
+        self.assertEqual(conn.getresponse().status, 400)
+        conn.close()
 
     def test_the_dashboard_needs_the_password(self):
         basic = lambda pw: {"Authorization": "Basic " + __import__("base64").b64encode(f"me:{pw}".encode()).decode()}

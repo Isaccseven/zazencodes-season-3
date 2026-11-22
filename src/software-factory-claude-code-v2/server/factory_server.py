@@ -144,7 +144,8 @@ def decide(event, payload, cfg):
                 return "ignore", "unknown /factory command"
             if m.group(1) == "run":
                 return "run", f"/factory run on #{number}"
-            return "command", {"kind": m.group(1), "number": number, "text": m.group(2).strip()}
+            return "command", {"kind": m.group(1), "number": number, "text": m.group(2).strip(),
+                               "login": (comment.get("user") or {}).get("login", "")}
         if "pull_request" in issue:
             return "ignore", "comment on a pull request"
         if issue.get("state") == "open" and label in {l["name"] for l in issue.get("labels", [])}:
@@ -194,9 +195,9 @@ class Runner(threading.Thread):
             self.running = True
             try:
                 self.last = self.cycle()
-            except Exception as e:  # keep serving webhooks whatever a cycle does
+            except Exception:  # keep serving webhooks whatever a cycle does
                 log.exception("cycle failed")
-                self.last = f"failed: {e}"
+                self.last = "failed; see the server log"
             finally:
                 self.running = False
             log.info("cycle done: %s", self.last)
@@ -266,9 +267,13 @@ class Runner(threading.Thread):
         """Run `job feedback` or `job reject` with the comment's words on stdin.
 
         The words never reach a prompt or a command line. A refusal goes back
-        to the thread it came from.
+        to the thread it came from. The webhook already dropped commands from
+        people GitHub doesn't associate with the repository; this asks for
+        their real permission.
         """
         number = cmd["number"]
+        if not self.can_write(cmd.get("login", "")):
+            return self.reply(number, f"`/factory {cmd['kind']}` needs write access to this repository.")
         job = next((j for j in self.jobs() if number in (j.get("issue"), j.get("pr"))), None)
         if job is None:
             return self.reply(number, f"There is no factory job for #{number}.")
@@ -277,6 +282,18 @@ class Runner(threading.Thread):
                  (res.stdout or res.stderr).strip())
         if res.returncode != 0:
             self.reply(number, f"`/factory {cmd['kind']}` was refused:\n\n```\n{(res.stderr or res.stdout).strip()}\n```")
+
+    def can_write(self, login):
+        """True when GitHub says `login` has write or admin permission here.
+
+        author_association isn't enough: an organization member or an outside
+        collaborator can be read-only, and feedback outranks the spec.
+        """
+        if not re.fullmatch(r"[A-Za-z0-9-]+(\[bot\])?", login or ""):
+            return False
+        res = self.sh(["gh", "api", f"repos/{self.cfg.repo}/collaborators/{login}/permission",
+                       "--jq", ".permission"], check=False)
+        return res.returncode == 0 and res.stdout.strip() in {"admin", "write"}
 
     def reply(self, number, body):
         res = self.sh(["gh", "issue", "comment", str(number), "--body", f"{MARKER}\n{body}"], check=False)
@@ -353,6 +370,8 @@ class Handler(SimpleHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", ""))
         except ValueError:
             return self.send_text(411, "length required\n")
+        if length < 0:
+            return self.send_text(400, "bad length\n")
         if length > MAX_BODY:
             return self.send_text(413, "too large\n")
         body = self.rfile.read(length)
